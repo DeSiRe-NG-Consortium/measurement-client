@@ -1,0 +1,105 @@
+#!/bin/bash
+
+# Setup script for DeSiRe-NG Measurement Client (MC)
+# This script is written for Debian12. Feel free to run it on any other Linux Distro, but on your own risk!
+# In case you have a fresh install, please add the official sources.d
+
+
+read -p "Please enter the user name that you want to set up the Measurement Client for: " username
+read -p "Please enter the full path that you want to install this software into, e.g. /home/user/desire-measurement-client: " installPath
+
+echo "You entered: Username = $username | Installation Path = $installPath"
+read -p "If you want to proceed, please type yes. If not, please close the setup script or type no." yn
+case $yn in
+    yes ) echo "Proceeding with the setup.";;
+    no ) echo "Aborting.";
+         exit;;
+    * ) echo "Read neither yes nor no -  aborting...";
+        exit 1;;
+esac
+
+echo "Updating your system and installing prerequisites..."
+sleep 2
+sudo apt update
+sudo apt install -y udhcpc iperf3 python3-venv
+
+# Create install directory
+echo "Creating install directory at ${installPath} ..."
+mkdir -p $installPath
+
+# Copy files
+echo "Copying files..."
+cp clientAPI.py ${installPath}
+cp McMeasurementPoint.py ${installPath}
+cp parse_iperf3.py ${installPath}
+cp parse_latency.py ${installPath}
+cp README.md ${installPath}
+cp setup5GNS.sh ${installPath}
+
+# Setup python venv and install dependencies
+echo "Installing python venv at ${installPath}/venv-desire ..."
+python3 -m venv ${installPath}/venv-desire
+echo "Installing python dependencies..."
+sleep 2
+${installPath}/venv-desire/bin/pip3 install mysql-connector-python matplotlib flask Flask-APScheduler requests getmac
+
+# Service installation
+## Measurement Client API Service
+pathToService="/etc/systemd/system/measurementClientAPI.service"
+echo "Installing measurementClientAPI.service at ${pathToService}..."
+touch $pathToService
+echo "[Unit]" >> $pathToService
+echo "Description=DeSiRe-NG Measurement Client API" >> $pathToService
+echo "After=network.target" >> $pathToService
+echo "" >> $pathToService
+echo "[Service]" >> $pathToService
+echo "Type=simple" >> $pathToService
+echo "ExecStartPre=/bin/sleep 10" >> $pathToService
+echo "ExecStart=${installPath}/venv-desire/bin/python3 ${installPath}/clientAPI.py" >> $pathToService
+echo "" >> $pathToService
+echo "[Install]" >> $pathToService
+echo "WantedBy=multi-user.target" >> $pathToService
+
+
+## latencyClient Service
+pathToService="/etc/systemd/system/latencyClient.service"
+echo "Installing latencyClient.service at ${pathToService}..."
+touch $pathToService
+echo "[Unit]" >> $pathToService
+echo "Description=DeSiRe-NG Latency Measurement Client" >> $pathToService
+echo "After=network.target" >> $pathToService
+echo "" >> $pathToService
+echo "[Service]" >> $pathToService
+echo "Type=simple" >> $pathToService
+echo "ExecStart=${installPath}/venv-desire/bin/python3 ${installPath}/parse_latency.py" >> $pathToService
+echo "" >> $pathToService
+echo "[Install]" >> $pathToService
+echo "WantedBy=multi-user.target" >> $pathToService
+
+## iperfClient Service
+pathToService="/etc/systemd/system/iperfClient.service"
+echo "Installing iperfClient.service at ${pathToService}..."
+touch $pathToService
+echo "[Unit]" >> $pathToService
+echo "Description=DeSiRe-NG Data Rate Measurement Client" >> $pathToService
+echo "After=network.target" >> $pathToService
+echo "" >> $pathToService
+echo "[Service]" >> $pathToService
+echo "Type=simple" >> $pathToService
+echo "ExecStart=${installPath}/venv-desire/bin/python3 ${installPath}/parse_iperf3.py" >> $pathToService
+echo "" >> $pathToService
+echo "[Install]" >> $pathToService
+echo "WantedBy=multi-user.target" >> $pathToService
+
+# 5GNS setup
+echo "Setting up crontab for the 5G network namespace..."
+(sudo crontab -l 2>/dev/null; echo "@reboot sleep 5 && ${installPath}/setup5GNS.sh") | sudo crontab -
+
+# Enable service
+echo "Enabling service..."
+sleep 2
+sudo systemctl daemon-reload
+sudo systemctl enable measurementClientAPI.service
+sudo systemctl restart measurementClientAPI.service 
+
+echo "Finished setup!"
